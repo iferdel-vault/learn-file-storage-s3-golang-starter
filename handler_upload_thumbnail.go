@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,8 +33,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	const maxMemory = 10 << 20
+	const maxMemory = 10 << 20 // 20 MB
 	r.ParseMultipartForm(maxMemory)
+
 	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
@@ -42,36 +44,39 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 
 	mediaType := header.Header.Get("Content-Type")
-	fileContent, err := io.ReadAll(file)
+	if mediaType == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail in request", err)
+		return
+	}
+
+	data, err := io.ReadAll(file)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to read file content", err)
+		respondWithError(w, http.StatusInternalServerError, "Error reading file", err)
 		return
 	}
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable  read file content", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't find speficied video to assign thumbnail", err)
 		return
 	}
 	if video.UserID != userID {
-		respondWithError(w, http.StatusUnauthorized, "Video does not belong to user", err)
+		respondWithError(w, http.StatusUnauthorized, "Current user is not authorized to update this video", err)
 		return
 	}
-	dat := thumbnail{
-		mediaType: mediaType,
-		data:      fileContent,
-	}
-	videoThumbnails[videoID] = dat
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
+	dataString := base64.StdEncoding.EncodeToString(data)
+	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, dataString)
 	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to update video", err)
+		delete(videoThumbnails, videoID) // to omit leftovers...
+		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
 		return
 	}
 
+	// using plain 'video' would also work
 	respondWithJSON(w, http.StatusOK, database.Video{
 		ID:                video.ID,
 		CreatedAt:         video.CreatedAt,
