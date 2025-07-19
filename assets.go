@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -19,7 +19,7 @@ func getAssetPath(mediaType string) string {
 	fileExtension := mediaTypeToExt(mediaType)
 	b := make([]byte, 32)
 	rand.Read(b)
-	fileName := base64.RawURLEncoding.EncodeToString(b)
+	fileName := hex.EncodeToString(b)
 	filePath := fmt.Sprintf("%s.%s", fileName, fileExtension)
 	return filePath
 }
