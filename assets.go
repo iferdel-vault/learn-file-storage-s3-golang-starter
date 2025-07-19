@@ -42,40 +42,44 @@ func (cfg apiConfig) getObjectURL(key string) string {
 }
 
 func getVideoAspectRatio(filePath string) (string, error) {
-	args := []string{"-v", "error", "-print_format", "json", "-show_streams", filePath}
+	args := []string{
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams",
+		filePath,
+	}
 	cmd := exec.Command("ffprobe", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		return "", err
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffprobe error: %v", err)
 	}
-
 	if stderr.String() != "" {
 		return "", errors.New(stderr.String())
 	}
 
-	type videoDims struct {
+	type output struct {
 		Streams []struct {
 			Width  int `json:"width"`
 			Height int `json:"height"`
 		} `json:"streams"`
 	}
-	d := videoDims{}
-	err = json.Unmarshal(stdout.Bytes(), &d)
+	d := output{}
+	err := json.Unmarshal(stdout.Bytes(), &d)
 	if err != nil {
 		return "", fmt.Errorf("error on unmarshalling video dimentions from output of ffprobe cmd: %s", err)
 	}
 	if len(d.Streams) == 0 {
-		return "", fmt.Errorf("no video streams found")
+		return "", errors.New("no video streams found")
 	}
 
 	width, height := d.Streams[0].Width, d.Streams[0].Height
 	if height == 0 {
 		return "", fmt.Errorf("invalid height value: 0")
 	}
+
 	ratio := float64(width) / float64(height)
 	const aspectRatioTolerance = 0.01
 	aspectRatio, err := getAspectRatio(ratio, aspectRatioTolerance)
@@ -91,8 +95,6 @@ func getAspectRatio(ratio, tolerance float64) (string, error) {
 		return "16:9", nil
 	case nearlyEqual(ratio, 9.0/16.0, tolerance):
 		return "9:16", nil
-	case nearlyEqual(ratio, 1.0, tolerance):
-		return "1:1", nil
 	default:
 		return fmt.Sprintf("%.0f", ratio), nil
 	}
