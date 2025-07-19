@@ -75,8 +75,11 @@ func main() {
 		log.Fatal("S3_CF_DISTRO environment variable is not set")
 	}
 
-	s3ClientConfig, _ := config.LoadDefaultConfig(context.Background(), config.WithRegion(s3Region))
-	s3Client := s3.NewFromConfig(s3ClientConfig)
+	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(s3Region))
+	if err != nil {
+		log.Fatal(err)
+	}
+	s3Client := s3.NewFromConfig(awsCfg)
 
 	port := os.Getenv("PORT")
 	if port == "" {
