@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,36 +41,74 @@ func (cfg apiConfig) getObjectURL(key string) string {
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
 }
 
-func GCD(a, b int) int {
-	for b != 0 {
-		t := b
-		b = a % b
-		a = t
-	}
-	return a
-}
-
 func getVideoAspectRatio(filePath string) (string, error) {
-	cmd := exec.Command("ffprobe", "-v error", "print_format json", fmt.Sprintf("-show_streams %s", filePath))
-	var buffer bytes.Buffer
-	cmd.Stdout = &buffer
+	args := []string{"-v", "error", "-print_format", "json", "-show_streams", filePath}
+	cmd := exec.Command("ffprobe", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
 		return "", err
 	}
 
+	if stderr.String() != "" {
+		return "", errors.New(stderr.String())
+	}
+
 	type videoDims struct {
-		Width  int `json:"width"`
-		Height int `json:"height"`
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
 	}
 	d := videoDims{}
-	err = json.Unmarshal(buffer.Bytes(), &d)
+	err = json.Unmarshal(stdout.Bytes(), &d)
 	if err != nil {
 		return "", fmt.Errorf("error on unmarshalling video dimentions from output of ffprobe cmd: %s", err)
 	}
+	if len(d.Streams) == 0 {
+		return "", fmt.Errorf("no video streams found")
+	}
 
-	gcd := GCD(d.Width, d.Height)
-	aspectRatio := fmt.Sprintf("%d:%d", d.Width/gcd, d.Height/gcd)
-
+	width, height := d.Streams[0].Width, d.Streams[0].Height
+	if height == 0 {
+		return "", fmt.Errorf("invalid height value: 0")
+	}
+	ratio := float64(width) / float64(height)
+	const aspectRatioTolerance = 0.01
+	aspectRatio, err := getAspectRatio(ratio, aspectRatioTolerance)
+	if err != nil {
+		return "", err
+	}
 	return aspectRatio, nil
+}
+
+func getAspectRatio(ratio, tolerance float64) (string, error) {
+	switch {
+	case nearlyEqual(ratio, 16.0/9.0, tolerance):
+		return "16:9", nil
+	case nearlyEqual(ratio, 9.0/16.0, tolerance):
+		return "9:16", nil
+	case nearlyEqual(ratio, 1.0, tolerance):
+		return "1:1", nil
+	default:
+		return fmt.Sprintf("%.0f", ratio), nil
+	}
+}
+
+func nearlyEqual(a, b, tolerance float64) bool {
+	return math.Abs(a-b) <= tolerance
+}
+
+func setVideoSchemaPrefix(key, aspectRatio string) string {
+	switch aspectRatio {
+	case "16:9":
+		return fmt.Sprintf("landscape/%s", key)
+	case "9:16":
+		return fmt.Sprintf("portrait/%s", key)
+	default:
+		return fmt.Sprintf("other/%s", key)
+	}
 }
