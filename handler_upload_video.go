@@ -1,14 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -16,6 +14,8 @@ import (
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	uploadLimit := 1 << 30
+	r.Body = http.MaxBytesReader(w, r.Body, int64(uploadLimit))
 
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
@@ -23,9 +23,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
 		return
 	}
-
-	uploadLimit := 1 << 30
-	r.Body = http.MaxBytesReader(w, r.Body, int64(uploadLimit))
 
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
@@ -66,31 +63,45 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fileExtension := mediaTypeToExt(mediaType)
-	b := make([]byte, 32)
-	rand.Read(b)
-	fileName := base64.RawURLEncoding.EncodeToString(b)
-	filePath := fmt.Sprintf("%s.%s", fileName, fileExtension)
-
 	tempFile, err := os.CreateTemp("", "tubely-upload.mp4")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not create temp file", err)
+		return
+	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
+
 	if _, err = io.Copy(tempFile, file); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error saving file", err)
 		return
 	}
 
-	tempFile.Seek(0, io.SeekStart)
+	_, err = tempFile.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not reset file pointer", err)
+		return
+	}
 
-	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
-		Bucket:      &cfg.s3Bucket,
-		Key:         &filePath,
+	key := getAssetPath(mediaType)
+	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
+		Bucket:      aws.String(cfg.s3Bucket),
+		Key:         aws.String(key),
 		Body:        tempFile,
-		ContentType: &mediaType,
+		ContentType: aws.String(mediaType),
 	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error uploading file to S3", err)
+		return
+	}
 
-	s3VideoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, filePath)
-	video.VideoURL = &s3VideoURL
-	cfg.db.UpdateVideo(video)
+	url := cfg.getObjectURL(key)
+	video.VideoURL = &url
+	err = cfg.db.UpdateVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, video)
 
 }

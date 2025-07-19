@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +13,15 @@ func (cfg apiConfig) ensureAssetsDir() error {
 		return os.Mkdir(cfg.assetsRoot, 0755)
 	}
 	return nil
+}
+
+func getAssetPath(mediaType string) string {
+	fileExtension := mediaTypeToExt(mediaType)
+	b := make([]byte, 32)
+	rand.Read(b)
+	fileName := base64.RawURLEncoding.EncodeToString(b)
+	filePath := fmt.Sprintf("%s.%s", fileName, fileExtension)
+	return filePath
 }
 
 func mediaTypeToExt(mediaType string) string {
