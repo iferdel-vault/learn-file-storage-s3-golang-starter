@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func (cfg apiConfig) ensureAssetsDir() error {
@@ -123,4 +127,13 @@ func processVideoForFastStart(filePath string) (string, error) {
 		return "", fmt.Errorf("ffmpeg error: %v", err)
 	}
 	return outputFilePath, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	client := s3.NewPresignClient(s3Client)
+	r, err := client.PresignGetObject(context.Background(), &s3.GetObjectInput{}, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", err
+	}
+	return r.URL, nil
 }
