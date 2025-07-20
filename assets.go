@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
@@ -132,25 +133,33 @@ func processVideoForFastStart(filePath string) (string, error) {
 
 func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
 	client := s3.NewPresignClient(s3Client)
-	r, err := client.PresignGetObject(context.Background(), &s3.GetObjectInput{}, s3.WithPresignExpires(expireTime))
+	r, err := client.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(expireTime))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to generate presigned URL: %v", err)
 	}
 	return r.URL, nil
 }
 
 func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
 	s := strings.Split(*video.VideoURL, ",")
+	if len(s) < 2 {
+		return video, nil
+	}
 	bucket, key := s[0], s[1]
-
 	url, err := generatePresignedURL(
 		cfg.s3Client,
 		bucket,
 		key,
-		time.Hour*1,
+		time.Minute*5,
 	)
 	if err != nil {
-		return database.Video{}, err
+		return video, err
 	}
 	video.VideoURL = &url
 	return video, nil
