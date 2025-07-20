@@ -15,9 +15,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
-func (cfg apiConfig) ensureAssetsDir() error {
+func (cfg *apiConfig) ensureAssetsDir() error {
 	if _, err := os.Stat(cfg.assetsRoot); os.IsNotExist(err) {
 		return os.Mkdir(cfg.assetsRoot, 0755)
 	}
@@ -136,4 +137,21 @@ func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime ti
 		return "", err
 	}
 	return r.URL, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	s := strings.Split(*video.VideoURL, ",")
+	bucket, key := s[0], s[1]
+
+	url, err := generatePresignedURL(
+		cfg.s3Client,
+		bucket,
+		key,
+		time.Hour*1,
+	)
+	if err != nil {
+		return database.Video{}, err
+	}
+	video.VideoURL = &url
+	return video, nil
 }
