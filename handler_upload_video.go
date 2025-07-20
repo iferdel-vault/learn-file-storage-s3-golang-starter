@@ -75,7 +75,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error saving file", err)
 		return
 	}
-
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not reset file pointer", err)
@@ -85,14 +84,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not get video aspect ratio", err)
+		return
 	}
 
 	key := setVideoSchemaPrefix(getAssetPath(mediaType), aspectRatio)
 
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
+	processedFile, err := os.Open(processedFilePath)
+	defer os.Remove(processedFile.Name())
+	defer processedFile.Close()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not read processed video file for fast start", err)
+		return
+	}
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
